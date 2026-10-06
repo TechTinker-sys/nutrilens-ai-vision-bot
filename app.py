@@ -148,7 +148,7 @@ if not gemini_api_key:
     )
     st.stop()
 
-model_name = get_setting("GEMINI_MODEL", "gemini-2.5-flash")
+model_name = get_setting("GEMINI_MODEL", "gemini-3.5-flash-lite")
 twilio_account_sid = get_setting("TWILIO_ACCOUNT_SID")
 twilio_auth_token = get_setting("TWILIO_AUTH_TOKEN")
 twilio_whatsapp_from = get_setting(
