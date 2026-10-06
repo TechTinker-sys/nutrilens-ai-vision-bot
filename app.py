@@ -1,6 +1,5 @@
 import hashlib
 import os
-import re
 from typing import Literal
 
 import streamlit as st
@@ -8,7 +7,6 @@ from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 from streamlit.errors import StreamlitSecretNotFoundError
-from twilio.rest import Client as TwilioClient
 
 
 st.set_page_config(page_title="NutriLens", page_icon="🥗")
@@ -105,39 +103,9 @@ def create_meal_chat(
     )
 
 
-def create_summary(
-    client: genai.Client, meal: Meal, messages: list[dict[str, str]], model_name: str
-) -> str:
-    transcript = "\n".join(
-        f"{message['role']}: {message['content']}" for message in messages
-    )
-    prompt = (
-        "Write a WhatsApp-friendly plain-text summary under 900 characters, using a few "
-        "emojis if useful. Cover the dish, estimated calories and macros, and key advice "
-        "from the chat. Mention that photo-based nutrition figures are estimates. "
-        "Do not give a diagnosis.\n\n"
-        f"Meal analysis:\n{meal.model_dump_json()}\n\n"
-        f"Chat:\n{transcript or '(No chat questions yet.)'}"
-    )
-    response = client.models.generate_content(model=model_name, contents=prompt)
-    if not response.text or not response.text.strip():
-        raise ValueError("Gemini returned an empty summary.")
-    return response.text.strip()[:899]
-
-
-def send_whatsapp(to_number: str, body: str, account_sid: str, auth_token: str, from_number: str):
-    twilio = TwilioClient(account_sid, auth_token)
-    return twilio.messages.create(
-        from_=from_number,
-        to=f"whatsapp:{to_number}",
-        body=body[:1500],
-    )
-
-
 st.title("🥗 NutriLens")
 st.caption(
-    "Snap a meal, explore its estimated nutrition, chat with your AI assistant, "
-    "and send yourself a summary."
+    "Snap a meal, explore its estimated nutrition, and chat with your AI assistant."
 )
 
 gemini_api_key = get_setting("GEMINI_API_KEY")
@@ -149,11 +117,6 @@ if not gemini_api_key:
     st.stop()
 
 model_name = get_setting("GEMINI_MODEL", "gemini-3.5-flash-lite")
-twilio_account_sid = get_setting("TWILIO_ACCOUNT_SID")
-twilio_auth_token = get_setting("TWILIO_AUTH_TOKEN")
-twilio_whatsapp_from = get_setting(
-    "TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886"
-)
 client = genai.Client(api_key=gemini_api_key)
 
 upload_tab, camera_tab = st.tabs(["Upload photo", "Use camera"])
@@ -173,9 +136,9 @@ image_bytes = image.getvalue()
 mime_type = image.type or "image/jpeg"
 image_hash = hashlib.sha256(image_bytes).hexdigest()
 
-# A new image starts a fresh analysis, chat, and summary.
+# A new image starts a fresh analysis and chat.
 if st.session_state.get("image_hash") != image_hash:
-    for key in ("meal", "meal_chat", "messages", "summary"):
+    for key in ("meal", "meal_chat", "messages"):
         st.session_state.pop(key, None)
     st.session_state["image_hash"] = image_hash
 
@@ -244,49 +207,3 @@ if question:
                         {"role": "assistant", "content": answer},
                     ]
                 )
-
-st.divider()
-st.subheader("Send a summary to WhatsApp")
-phone_number = st.text_input(
-    "WhatsApp number", placeholder="+91XXXXXXXXXX"
-)
-if st.button("Summarise & send", type="primary"):
-    if not re.fullmatch(r"\+91\d{10}", phone_number.strip()):
-        st.error("Enter a valid Indian mobile number in the format +91XXXXXXXXXX.")
-    elif not twilio_account_sid or not twilio_auth_token:
-        st.error(
-            "Twilio credentials are missing. Add TWILIO_ACCOUNT_SID and "
-            "TWILIO_AUTH_TOKEN to your secrets."
-        )
-    else:
-        st.session_state.pop("summary", None)
-        with st.spinner("Creating your summary..."):
-            try:
-                st.session_state["summary"] = create_summary(
-                    client, meal, st.session_state["messages"], model_name
-                )
-            except Exception as error:
-                st.error(
-                    f"We couldn't create the summary. Please try again. Details: {error}"
-                )
-
-        if st.session_state.get("summary"):
-            with st.spinner("Sending your WhatsApp message..."):
-                try:
-                    send_whatsapp(
-                        phone_number.strip(),
-                        st.session_state["summary"],
-                        twilio_account_sid,
-                        twilio_auth_token,
-                        twilio_whatsapp_from,
-                    )
-                except Exception as error:
-                    st.error(
-                        "The summary was created, but WhatsApp could not send it. "
-                        f"Check your Twilio setup and number. Details: {error}"
-                    )
-                else:
-                    st.success("Summary sent! Check your WhatsApp messages.")
-
-if st.session_state.get("summary"):
-    st.text_area("WhatsApp summary", st.session_state["summary"], height=160)
